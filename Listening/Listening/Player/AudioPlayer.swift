@@ -1,5 +1,7 @@
 import AVFoundation
 import Combine
+import MediaPlayer
+import UIKit
 
 class AudioPlayer: NSObject, ObservableObject {
     static let shared = AudioPlayer()
@@ -9,11 +11,12 @@ class AudioPlayer: NSObject, ObservableObject {
         
         let audioSession = AVAudioSession.sharedInstance()
         do {
-            try audioSession.setCategory(.playback, mode: .default)
+            try audioSession.setCategory(.playback, mode: .default, options: [])
             try audioSession.setActive(true)
         } catch {
             print("Setting up audio session failed: \(error)")
         }
+        setupRemoteTransportControls()
     }
     
     var player: AVAudioPlayer?
@@ -115,6 +118,7 @@ class AudioPlayer: NSObject, ObservableObject {
             nowPlayingID = music.id
             currentPlayingID = music.id
             totalDuration = player?.duration ?? 0
+            updateNowPlayingInfo(for: music)
             return true
         } catch {
             print("加载失败: \(error.localizedDescription)")
@@ -136,7 +140,7 @@ class AudioPlayer: NSObject, ObservableObject {
         totalDuration = 0
         
         // 停止监听系统音量
-       // NotificationCenter.default.removeObserver(self)
+        // NotificationCenter.default.removeObserver(self)
     }
     
     func togglePlayPause() {
@@ -149,6 +153,7 @@ class AudioPlayer: NSObject, ObservableObject {
             player.play()
             isPlaying = true
         }
+        updateNowPlayingPlaybackInfo()
     }
     
     // 播放下一首
@@ -189,6 +194,7 @@ class AudioPlayer: NSObject, ObservableObject {
         guard let player = player else { return }
         let newTime = min(progress * player.duration, player.duration - 0.1) // 确保不超过总时长
         player.currentTime = newTime
+        updateNowPlayingPlaybackInfo()
         
         // 如果当前是暂停状态，拖动后可能会重新准备播放，这里我们保持状态
         if !player.isPlaying {
@@ -219,6 +225,7 @@ class AudioPlayer: NSObject, ObservableObject {
             player.pause()
             isPlaying = false
         }
+        updateNowPlayingPlaybackInfo()
     }
     
     // 添加专门的加载但不播放功能
@@ -235,6 +242,7 @@ class AudioPlayer: NSObject, ObservableObject {
         
         player.play()
         isPlaying = true
+        updateNowPlayingPlaybackInfo()
     }
     
     func prepareOrPlay(music: MusicFile, action: PlayerAction = .play) {
@@ -248,6 +256,7 @@ class AudioPlayer: NSObject, ObservableObject {
                 isPlaying = true
             }
             updatePlayerVolume() // 确保音量更新
+            updateNowPlayingPlaybackInfo()
             return
         }
         
@@ -263,6 +272,8 @@ class AudioPlayer: NSObject, ObservableObject {
             currentPlayingID = music.id
             totalDuration = player?.duration ?? 0
             
+            updateNowPlayingInfo(for: music)
+            
             // 只在需要播放时才启动播放
             if action == .play {
                 player?.play()
@@ -270,6 +281,7 @@ class AudioPlayer: NSObject, ObservableObject {
             } else {
                 isPlaying = false
             }
+            updateNowPlayingPlaybackInfo()
             
             // 开启音量监听
             startObservingSystemVolume()
@@ -277,5 +289,57 @@ class AudioPlayer: NSObject, ObservableObject {
         } catch {
             print("操作失败: \(error.localizedDescription)")
         }
+    }
+    
+    // MARK: - Now Playing Info
+    func setupRemoteTransportControls() {
+        let commandCenter = MPRemoteCommandCenter.shared()
+        
+        commandCenter.playCommand.addTarget { [unowned self] event in
+            if !self.isPlaying {
+                self.play()
+                return .success
+            }
+            return .commandFailed
+        }
+        
+        commandCenter.pauseCommand.addTarget { [unowned self] event in
+            if self.isPlaying {
+                self.pause()
+                return .success
+            }
+            return .commandFailed
+        }
+        
+        commandCenter.nextTrackCommand.addTarget { [unowned self] event in
+            self.playNextTrack()
+            return .success
+        }
+        
+        commandCenter.previousTrackCommand.addTarget { [unowned self] event in
+            self.playPreviousTrack()
+            return .success
+        }
+    }
+    
+    func updateNowPlayingInfo(for music: MusicFile) {
+        var nowPlayingInfo = [String: Any]()
+        nowPlayingInfo[MPMediaItemPropertyTitle] = music.title
+        nowPlayingInfo[MPMediaItemPropertyArtist] = music.artist
+        if let image = GlobalMusicManager.shared.getCoverImage(for: music) {
+            nowPlayingInfo[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) {
+                _ in image
+            }
+        }
+        nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = player?.duration ?? 0
+        
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+    }
+    
+    func updateNowPlayingPlaybackInfo() {
+        var nowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [String: Any]()
+        nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = player?.currentTime
+        nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
     }
 }
