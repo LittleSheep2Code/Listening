@@ -14,8 +14,8 @@
             filePath = "Listening/Player/AudioPlayer.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "332"
-            endingLineNumber = "332"
+            startingLineNumber = "343"
+            endingLineNumber = "343"
             landmarkName = "handlePlayCommand(event:)"
             landmarkType = "7">
          </BreakpointContent>

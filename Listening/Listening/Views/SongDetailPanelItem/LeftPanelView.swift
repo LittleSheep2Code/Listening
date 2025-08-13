@@ -118,7 +118,7 @@ struct LeftPanelView: View {
                             
                             Circle()
                                 .fill(Color.cyan)
-                                .frame(width: 15, height: 15)
+                                .frame(width: 10, height: 10)
                                 .overlay(
                                     Circle()
                                         .stroke(Color.blue.opacity(0.0001), lineWidth: 80)

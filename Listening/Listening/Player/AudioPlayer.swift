@@ -321,11 +321,22 @@ class AudioPlayer: NSObject, ObservableObject, PlaybackController {
         print("Setting up remote transport controls")
         let commandCenter = MPRemoteCommandCenter.shared()
         
+        commandCenter.changePlaybackPositionCommand.isEnabled = true
+        commandCenter.changePlaybackPositionCommand.addTarget(handler: handleChangePlaybackPosition)
+        
         commandCenter.playCommand.addTarget(handler: handlePlayCommand)
         commandCenter.pauseCommand.addTarget(handler: handlePauseCommand)
         commandCenter.nextTrackCommand.addTarget(handler: handleNextTrackCommand)
         commandCenter.previousTrackCommand.addTarget(handler: handlePreviousTrackCommand)
         print("Set up remote transport controls done")
+    }
+    
+    private func handleChangePlaybackPosition(event: MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus {
+        if isPlaying {
+            seek(to: (event as! MPChangePlaybackPositionCommandEvent).positionTime / self.player!.duration)
+            return .success
+        }
+        return .commandFailed
     }
     
     private func handlePlayCommand(event: MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus {
