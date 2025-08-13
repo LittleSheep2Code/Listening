@@ -11,13 +11,13 @@ struct PlaylistBatchOperationBar: View {
             // 左侧：取消按钮
             Button(action: onCancel) {
                 Image(systemName: "xmark")
-            }
+            }.padding(.horizontal)
             
             Spacer()
             
             // 中部：选择计数
             Text("已选 \(selectedCount) 项")
-                .font(.subheadline)
+                .font(.subheadline).padding(.vertical, 12)
             
             Spacer()
             
@@ -25,12 +25,39 @@ struct PlaylistBatchOperationBar: View {
             Button(action: onDelete) {
                 Image(systemName: "trash")
                     .foregroundColor(.red)
-            }
+            }.padding(.horizontal)
         }
         .padding(.vertical, 8)
         .background(.regularMaterial) // 使用半透明材料背景
         .cornerRadius(10)
         .shadow(radius: 5) // 添加轻微阴影
+        .padding()
+    }
+}
+
+private struct AboutButton: View {
+    let isEditing: Bool
+    let isSelected: Bool
+    let onSelect: () -> Void
+    
+    var body: some View {
+        Button(action: {
+            onSelect()
+        }) {
+            HStack {
+                Image(systemName: "info.circle").frame(width: 24)
+                Text("关于")
+                    .font(.headline)
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .listRowBackground(
+            isSelected ?
+            Color.gray.opacity(0.3) :
+                Color(UIColor.systemGray6)
+        )
+        .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
     }
 }
 
@@ -44,7 +71,7 @@ private struct AllSongsButton: View {
             onSelect()
         }) {
             HStack {
-                Image(systemName: "music.note")
+                Image(systemName: "music.note.house").frame(width: 24)
                 Text("全部歌曲")
                     .font(.headline)
                 Spacer()
@@ -152,6 +179,18 @@ struct SidebarView: View {
                         }
                     )
                     
+                    AboutButton(
+                        isEditing: isEditing,
+                        isSelected: currentView?.isAbout ?? false,
+                        onSelect: {
+                            currentView = .about
+                            if isEditing {
+                                isEditing = false
+                                selectedPlaylistIds = []
+                            }
+                        }
+                    )
+                    
                     PlaylistsSection(
                         playlists: playlists,
                         isEditing: isEditing,
@@ -226,6 +265,13 @@ struct SidebarView: View {
 
 // 扩展用于检查视图状态
 extension RightViewType {
+    var isAbout: Bool {
+        if case .about = self {
+            return true
+        }
+        return false
+    }
+    
     var isLibrary: Bool {
         if case .library = self {
             return true

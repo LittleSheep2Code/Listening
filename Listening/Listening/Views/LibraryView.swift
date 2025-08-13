@@ -221,12 +221,13 @@ struct BatchOperationBar: View {
         HStack {
             Button(action: onCancel) {
                 Image(systemName: "xmark")
-            }
+            }.padding(.horizontal)
             
             Spacer()
             
             Text("已选 \(selectedCount) 项")
                 .font(.subheadline)
+                .padding(.vertical, 12)
             
             Spacer()
             
@@ -243,11 +244,12 @@ struct BatchOperationBar: View {
             
             Button(action: onDelete) {
                 Image(systemName: "trash")
-            }
+            }.padding(.horizontal)
         }
         .padding(.vertical, 8)
         .background(.regularMaterial)
         .cornerRadius(10)
         .shadow(radius: 5)
+        .padding()
     }
 }

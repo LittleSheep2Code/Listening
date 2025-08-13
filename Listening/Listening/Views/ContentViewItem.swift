@@ -3,6 +3,7 @@ import SwiftUI
 enum RightViewType : Hashable {
     case library
     case playlist(id: UUID)
+    case about
 }
 
 
