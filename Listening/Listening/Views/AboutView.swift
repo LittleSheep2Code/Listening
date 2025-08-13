@@ -20,25 +20,27 @@ struct AboutView: View {
                     
                     let nextIconDisplayName = currentIconName == nil ? "NightSystem" : "LittleSheep";
                     
-                    Button(action: {
-                        UIApplication.shared.setAlternateIconName(
-                            currentIconName == nil ? "AppIcon-Original" : nil,
-                            completionHandler: { err in
-                                currentIconName = UIApplication.shared.alternateIconName
-                                didError = err != nil
-                                detailsError = err
-                            }
-                        )
-                    }) {
-                        Label("使用 \(nextIconDisplayName) 的图标", systemImage: "arrow.clockwise")
-                    }
-                    .padding(.bottom, 8)
-                    .alert(
-                        "无法改变应用图标",
-                        isPresented: $didError,
-                        presenting: detailsError
-                    ) { _ in } message: { details in
-                        Text(detailsError!.localizedDescription)
+                    if (UIApplication.shared.supportsAlternateIcons) {
+                        Button(action: {
+                            UIApplication.shared.setAlternateIconName(
+                                currentIconName == nil ? "AppIcon-Original" : nil,
+                                completionHandler: { err in
+                                    currentIconName = UIApplication.shared.alternateIconName
+                                    didError = err != nil
+                                    detailsError = err
+                                }
+                            )
+                        }) {
+                            Label("使用 \(nextIconDisplayName) 的图标", systemImage: "arrow.clockwise")
+                        }
+                        .padding(.bottom, 8)
+                        .alert(
+                            "无法改变应用图标",
+                            isPresented: $didError,
+                            presenting: detailsError
+                        ) { _ in } message: { details in
+                            Text(detailsError!.localizedDescription)
+                        }
                     }
                 }.padding(.bottom, 20)
                 

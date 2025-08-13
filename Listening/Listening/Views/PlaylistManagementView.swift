@@ -72,7 +72,7 @@ struct PlaylistManagementView: View {
                     
                     // 手动模式开关
                     Toggle("手动更新封面", isOn: $manualCoverMode)
-                        .onChange(of: manualCoverMode) { newValue in
+                        .onChange(of: manualCoverMode) { _,newValue in
                             // 开启手动模式时标记封面为手动设置
                             if newValue && coverImageData != nil {
                                 playlistManager.markCoverAsManual(for: playlist.id)

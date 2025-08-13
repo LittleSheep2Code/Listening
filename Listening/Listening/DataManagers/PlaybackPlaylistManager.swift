@@ -149,7 +149,7 @@ class PlaybackPlaylistManager: ObservableObject {
         onDataChanged()
     }
     
-    func playNextTrack(currentID: UUID, mode: AudioPlayer.PlaybackMode, audioPlayer: AudioPlayer) {
+    func playNextTrack(currentID: UUID, mode: PlaybackMode, audioPlayer: AudioPlayer) {
         guard !musicFiles.isEmpty else { return }
         
         let nextIndex: Int

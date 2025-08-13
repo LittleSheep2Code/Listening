@@ -23,10 +23,6 @@ struct BottomPlayerView: View {
     }()
     
     @State private var showPlaylist = false
-    @State private var progress: Float = 0.0
-    @State private var currentTime: TimeInterval = 0
-    @State private var totalTime: TimeInterval = 0
-    @State private var timer: Timer?
     @State private var geometry: CGSize? = nil
     @State private var coverImage: UIImage? = nil
     @State private var defaultCover = UIImage(named: "Logo")!
@@ -53,11 +49,12 @@ struct BottomPlayerView: View {
     
     @State var isCompact = false
     
+    @StateObject private var audioPlayerViewModel = AudioPlayerViewModel(audioPlayer: AudioPlayer.shared)
+
     var body: some View {
         VStack(spacing: 7) {
             Divider()
             GeometryReader { geometry in
-                let width = geometry.size.width
                 Color.clear
                     .onChange(of: geometry.size, initial: true) { newSize, _ in
                         isCompact = newSize.width < 500
@@ -106,19 +103,19 @@ struct BottomPlayerView: View {
                         // 进度条（紧凑模式下展示，隐藏标题等信息）
                         ProgressInfoView(
                             currentMusic: GlobalMusicManager.shared.getMusic(by: audioPlayer.currentPlayingID ?? UUID()),
-                            currentTime: currentTime,
-                            totalTime: totalTime,
-                            progress: progress,
+                            currentTime: audioPlayerViewModel.currentTime,
+                            totalTime: audioPlayerViewModel.totalTime,
+                            progress: audioPlayerViewModel.progress,
                             isSeeking: audioPlayer.isSeeking,
                             onSeek: { newProgress in
                                 audioPlayer.isSeeking = true
-                                progress = newProgress
+                                audioPlayerViewModel.progress = newProgress
                                 DispatchQueue.main.async {
-                                    currentTime = totalTime * TimeInterval(newProgress)
+                                    audioPlayerViewModel.currentTime = audioPlayerViewModel.totalTime * TimeInterval(newProgress)
                                 }
                             },
                             onSeekEnded: {
-                                audioPlayer.seek(to: Double(progress))
+                                audioPlayer.seek(to: Double(audioPlayerViewModel.progress))
                                 audioPlayer.isSeeking = false
                             },
                             geometry: $geometry,
@@ -129,19 +126,19 @@ struct BottomPlayerView: View {
                         // 进度和歌曲信息
                         ProgressInfoView(
                             currentMusic: GlobalMusicManager.shared.getMusic(by: audioPlayer.currentPlayingID ?? UUID()),
-                            currentTime: currentTime,
-                            totalTime: totalTime,
-                            progress: progress,
+                            currentTime: audioPlayerViewModel.currentTime,
+                            totalTime: audioPlayerViewModel.totalTime,
+                            progress: audioPlayerViewModel.progress,
                             isSeeking: audioPlayer.isSeeking,
                             onSeek: { newProgress in
                                 audioPlayer.isSeeking = true
-                                progress = newProgress
+                                audioPlayerViewModel.progress = newProgress
                                 DispatchQueue.main.async {
-                                    currentTime = totalTime * TimeInterval(newProgress)
+                                    audioPlayerViewModel.currentTime = audioPlayerViewModel.totalTime * TimeInterval(newProgress)
                                 }
                             },
                             onSeekEnded: {
-                                audioPlayer.seek(to: Double(progress))
+                                audioPlayer.seek(to: Double(audioPlayerViewModel.progress))
                                 audioPlayer.isSeeking = false
                             },
                             geometry: $geometry,
@@ -194,9 +191,9 @@ struct BottomPlayerView: View {
             SongDetailPanel(
                 showPanel: $showSongDetailPanel,
                 coverImage: coverImage ?? defaultCover,
-                currentTime: $currentTime,
-                totalTime: $totalTime,
-                progress: $progress,
+                currentTime: $audioPlayerViewModel.currentTime,
+                totalTime: $audioPlayerViewModel.totalTime,
+                progress: $audioPlayerViewModel.progress,
                 isSeeking: $audioPlayer.isSeeking
             )
             .environmentObject(audioPlayer)
@@ -223,38 +220,14 @@ struct BottomPlayerView: View {
                 )
             }
         }
-        .onAppear {
-            startProgressTimer()
-            if let player = audioPlayer.player {
-                currentTime = player.currentTime
-                totalTime = player.duration
-                progress = totalTime > 0 ? min(1.0, Float(currentTime / totalTime)) : 0
-            }
-        }
-        .onDisappear {
-            timer?.invalidate()
-        }
+        .onAppear { audioPlayerViewModel.startUpdatingProgress() }
+        .onDisappear { audioPlayerViewModel.stopUpdatingProgress() }  
         .onReceive(audioPlayer.$currentPlayingID) { _ in
             if let player = audioPlayer.player {
-                currentTime = 0
-                totalTime = player.duration
-                progress = 0
+                audioPlayerViewModel.currentTime = 0
+                audioPlayerViewModel.totalTime = player.duration
+                audioPlayerViewModel.progress = 0
             }
-        }
-        .onChange(of: audioPlayer.player?.currentTime) { newValue, _ in
-            guard !audioPlayer.isSeeking else { return }
-            if let player = audioPlayer.player, player.duration > 0 {
-                currentTime = min(player.currentTime, player.duration)
-                totalTime = player.duration
-                progress = min(1.0, Float(currentTime / totalTime))
-            } else {
-                currentTime = 0
-                totalTime = 0
-                progress = 0
-            }
-        }
-        .onChange(of: audioPlayer.totalDuration) { newDuration in
-            totalTime = newDuration
         }
     }
     
@@ -274,33 +247,6 @@ struct BottomPlayerView: View {
         let minutes = totalSeconds / 60
         let seconds = totalSeconds % 60
         return String(format: "%d:%02d", minutes, seconds)
-    }
-    
-    private func startProgressTimer() {
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-            // 当用户正在拖动时，不要自动更新进度
-            guard !self.audioPlayer.isSeeking else { return }
-            
-            if let player = self.audioPlayer.player, player.duration > 0 {
-                self.currentTime = player.currentTime
-                self.totalTime = player.duration
-                
-                // 确保进度值不超过1.0
-                self.progress = min(1.0, Float(self.currentTime / self.totalTime))
-                
-                // 添加特殊检查：如果接近结束且没有在播放下一首，自动触发结束
-                if self.totalTime - self.currentTime < 0.5 && player.isPlaying {
-                    DispatchQueue.main.async {
-                        self.audioPlayer.handleEnded()
-                    }
-                }
-            } else {
-                self.currentTime = 0
-                self.totalTime = 0
-                self.progress = 0
-            }
-        }
     }
     
     // 确认清空播放列表操作
@@ -532,7 +478,7 @@ private struct ProgressInfoView: View {
 }
 
 private struct PlaybackModeButton: View {
-    let mode: AudioPlayer.PlaybackMode
+    let mode: PlaybackMode
     let iconColor: Color
     let onTap: () -> Void
     var body: some View {
@@ -550,7 +496,7 @@ private struct PlaylistButtonView: View {
     @Binding var showPlaylist: Bool
     let playlistSize: CGSize
     let iconColor: Color
-    let playbackMode: AudioPlayer.PlaybackMode
+    let playbackMode: PlaybackMode
     let onCycleMode: () -> Void
     let onAddToPlaylist: () -> Void
     let onClearPlaylist: () -> Void

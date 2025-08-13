@@ -3,240 +3,285 @@ import Combine
 import MediaPlayer
 import UIKit
 
-class AudioPlayer: NSObject, ObservableObject {
+// MARK: - Protocols and Enums
+
+/// Defines the essential playback controls and state.
+protocol PlaybackController: AnyObject {
+    var isPlaying: Bool { get }
+    var totalDuration: TimeInterval { get }
+    var playbackMode: PlaybackMode { get set }
+    
+    func play(music: MusicFile)
+    func pause()
+    func togglePlayPause()
+    func stop()
+    func seek(to progress: Double)
+    func playNextTrack()
+    func playPreviousTrack()
+    func cyclePlaybackMode()
+}
+
+/// Defines the essential data model for a music file.
+protocol MusicFileRepresentable {
+    var id: UUID { get }
+    var title: String { get }
+    var artist: String { get }
+    var fileName: String { get }
+}
+
+enum PlaybackMode: CaseIterable {
+    case loopAll
+    case loopOne
+    case random
+    
+    var systemImage: String {
+        switch self {
+        case .loopAll: return "repeat"
+        case .loopOne: return "repeat.1"
+        case .random: return "shuffle"
+        }
+    }
+}
+
+// MARK: - AudioPlayer Class
+
+class AudioPlayer: NSObject, ObservableObject, PlaybackController {
+    
+    // MARK: - Singleton
     static let shared = AudioPlayer()
+    
     private override init() {
         super.init()
-        loadVolumeSettings()
-        
-        let audioSession = AVAudioSession.sharedInstance()
-        do {
-            try audioSession.setCategory(.playback, mode: .default, options: [.allowBluetooth, .allowAirPlay])
-            try audioSession.setActive(true)
-        } catch {
-            print("Setting up audio session failed: \(error)")
-        }
+        setupAudioSession()
         setupRemoteTransportControls()
-        
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleAudioSessionInterruption(_:)),
-            name: AVAudioSession.interruptionNotification,
-            object: AVAudioSession.sharedInstance()
-        )
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleAppDidBecomeActive),
-            name: UIApplication.didBecomeActiveNotification,
-            object: nil
-        )
+        setupNotifications()
+        loadVolumeSettings()
     }
     
-    @objc private func handleAppDidBecomeActive() {
-        // Re-activate the session after background/lock transitions
-        let audioSession = AVAudioSession.sharedInstance()
-        do {
-            try audioSession.setActive(true, options: [])
-            updatePlayerVolume()
-            updateNowPlayingPlaybackInfo()
-        } catch {
-            print("Failed to reactivate audio session: \(error)")
-        }
-    }
-
-    @objc private func handleAudioSessionInterruption(_ notification: Notification) {
-        guard
-            let info = notification.userInfo,
-            let typeValue = info[AVAudioSessionInterruptionTypeKey] as? UInt,
-            let type = AVAudioSession.InterruptionType(rawValue: typeValue)
-        else { return }
-
-        switch type {
-        case .began:
-            // System took audio. Reflect paused state so lock screen stays in sync.
-            if isPlaying { pause() }
-
-        case .ended:
-            // Check whether the system allows resuming.
-            let optionsValue = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
-            let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
-
-            do {
-                try AVAudioSession.sharedInstance().setActive(true, options: [])
-            } catch {
-                print("Failed to re-activate session after interruption end: \(error)")
-            }
-
-            if options.contains(.shouldResume) {
-                // Only resume if we were previously playing & user expects playback
-                play()
-            } else {
-                updateNowPlayingPlaybackInfo()
-            }
-        @unknown default:
-            break
-        }
-    }
-
-    // Optional: tidy up, though singleton rarely deallocs
     deinit {
         NotificationCenter.default.removeObserver(self)
+        // Ensure remote commands are unregistered on deinit, although with a singleton this is rare.
+        MPRemoteCommandCenter.shared().playCommand.removeTarget(self)
+        MPRemoteCommandCenter.shared().pauseCommand.removeTarget(self)
+        MPRemoteCommandCenter.shared().nextTrackCommand.removeTarget(self)
+        MPRemoteCommandCenter.shared().previousTrackCommand.removeTarget(self)
     }
     
-    var player: AVAudioPlayer?
-    @Published var currentPlayingID: UUID? = nil
-    @Published var isPlaying = false
-    @Published var isSeeking: Bool = false // 是否正在拖动进度条
+    // MARK: - Published Properties
     
-    // 新增：自定义音量控制相关属性
+    @Published var isPlaying = false
+    @Published var totalDuration: TimeInterval = 0
     @Published var customVolume: Double = 0.7 {
         didSet {
             saveVolumeSettings()
             updatePlayerVolume()
         }
     }
-    
-    // 新属性：跟踪实际播放的音频ID
-    private var nowPlayingID: UUID? = nil
-    @Published var totalDuration: TimeInterval = 0 // 存储总时长
-    
-    // 播放模式
-    enum PlaybackMode: CaseIterable {
-        case loopAll
-        case loopOne
-        case random
-        
-        var systemImage: String {
-            switch self {
-            case .loopAll: return "repeat"
-            case .loopOne: return "repeat.1"
-            case .random: return "shuffle"
-            }
-        }
-    }
-    
-    enum PlayerAction {
-        case prepare  // 只加载不播放
-        case play     // 加载并播放
-    }
-    
-    @Published var currentAction: PlayerAction = .play // 默认行为是播放
-    
     @Published var playbackMode: PlaybackMode = .loopAll
+    @Published var currentPlayingID: UUID? = nil
     
-    // 播放列表管理
+    // Restored: isSeeking property
+    @Published var isSeeking: Bool = false
+    
+    // MARK: - Private Properties
+    
+    internal var player: AVAudioPlayer?
+    private var playerDelegate: PlayerDelegate?
+    private var nowPlayingID: UUID? = nil
+    
     private var playlistManager: PlaybackPlaylistManager {
         PlaybackPlaylistManager.shared
     }
     
-    // MARK: - 音量控制方法
-    private func loadVolumeSettings() {
-        if let savedVolume = UserDefaults.standard.object(forKey: "customVolume") as? Double {
-            customVolume = savedVolume
-        } else {
-            // 默认音量 70%
-            customVolume = 0.7
+    // MARK: - Setup and Lifecycle
+    
+    private func setupAudioSession() {
+        let audioSession = AVAudioSession.sharedInstance()
+        do {
+            try audioSession.setCategory(.playback, mode: .default, options: [])
+            try audioSession.setActive(true)
+        } catch {
+            print("Setting up audio session failed: \(error)")
         }
+    }
+    
+    private func setupNotifications() {
+        let nc = NotificationCenter.default
+        nc.addObserver(self, selector: #selector(handleAudioSessionInterruption), name: AVAudioSession.interruptionNotification, object: nil)
+        nc.addObserver(self, selector: #selector(handleAppDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
+        // Register for system volume changes
+        nc.addObserver(self, selector: #selector(systemVolumeChanged), name: NSNotification.Name(rawValue: "AVSystemController_SystemVolumeDidChangeNotification"), object: nil)
+    }
+    
+    @objc private func handleAppDidBecomeActive() {
+        print("handleAppDidBecomeActive")
+        reactivateAudioSession()
+        setupRemoteTransportControls()
+    }
+    
+    private func reactivateAudioSession() {
+        let audioSession = AVAudioSession.sharedInstance()
+        do {
+            try audioSession.setActive(true)
+            updatePlayerVolume()
+            updateNowPlayingPlaybackInfo()
+        } catch {
+            print("Failed to reactivate audio session: \(error)")
+        }
+    }
+    
+    @objc private func handleAudioSessionInterruption(_ notification: Notification) {
+        print("handleAudioSessionInterruption")
+        guard let info = notification.userInfo,
+              let typeValue = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
+
+        switch type {
+        case .began:
+            if isPlaying { pause() }
+        case .ended:
+            let optionsValue = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+            reactivateAudioSession()
+            if options.contains(.shouldResume) {
+                // `play()` will only resume if a song is loaded and a user expects it to play.
+                play()
+            }
+        @unknown default:
+            break
+        }
+    }
+    
+    // MARK: - Volume Control
+    
+    private func loadVolumeSettings() {
+        customVolume = UserDefaults.standard.object(forKey: "customVolume") as? Double ?? 0.7
     }
     
     private func saveVolumeSettings() {
         UserDefaults.standard.set(customVolume, forKey: "customVolume")
     }
     
-    private func updatePlayerVolume() {
-        player?.volume = Float(customVolume) * Float(AVAudioSession.sharedInstance().outputVolume)
-    }
-    
-    // 添加系统音量监听
-    func startObservingSystemVolume() {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(systemVolumeChanged),
-            name: NSNotification.Name(rawValue: "AVSystemController_SystemVolumeDidChangeNotification"),
-            object: nil
-        )
-    }
-    
     @objc private func systemVolumeChanged() {
+        print("systemVolumeChanged")
         updatePlayerVolume()
     }
     
-    private var playerDelegate: PlayerDelegate?
+    private func updatePlayerVolume() {
+        player?.volume = Float(customVolume)
+    }
     
-    // MARK: - 播放控制方法
-    private func loadMusic(_ music: MusicFile) -> Bool {
-        // 检查是否需要重新加载
-        guard nowPlayingID != music.id || player == nil else {
-            return true
+    // MARK: - Playback Control
+    
+    func play(music: MusicFile) {
+        // Use the new private prepareAndPlay method for consistency
+        prepareAndPlay(music: music, shouldPlay: true)
+    }
+    
+    // Restored: loadWithoutPlaying method
+    func loadWithoutPlaying(music: MusicFile) {
+        prepareAndPlay(music: music, shouldPlay: false)
+    }
+
+    // New internal helper method to consolidate logic
+    private func prepareAndPlay(music: MusicFile, shouldPlay: Bool) {
+        // If the same music is already loaded, handle accordingly
+        if music.id == nowPlayingID {
+            if shouldPlay {
+                player?.play()
+                isPlaying = true
+            } else {
+                // If it's the same music and we're just loading, do nothing
+                return
+            }
+            updateNowPlayingPlaybackInfo()
+            return
         }
+        
+        // Stop current playback and load the new music
+        stop()
         
         guard let url = GlobalMusicManager.shared.fileURL(for: music.fileName) else {
-            return false
+            print("Failed to get URL for music file: \(music.fileName)")
+            return
         }
-        
-        stop()
         
         do {
             player = try AVAudioPlayer(contentsOf: url)
-            player?.prepareToPlay()
             playerDelegate = PlayerDelegate(player: self)
             player?.delegate = playerDelegate
-            updatePlayerVolume() // 设置初始音量
+            player?.prepareToPlay()
+            
+            // Update state
             nowPlayingID = music.id
             currentPlayingID = music.id
             totalDuration = player?.duration ?? 0
+            
+            // Set volume and play if needed
+            updatePlayerVolume()
+            
+            if shouldPlay {
+                player?.play()
+                isPlaying = true
+            } else {
+                isPlaying = false
+            }
+            
+            // Update Now Playing Info
             updateNowPlayingInfo(for: music)
-            return true
+            updateNowPlayingPlaybackInfo()
         } catch {
-            print("加载失败: \(error.localizedDescription)")
-            return false
+            print("Failed to load music: \(error.localizedDescription)")
+            stop()
         }
     }
     
-    // 分离后的播放方法
-    func play(music: MusicFile) {
-        prepareOrPlay(music: music, action: .play)
+    // The `play()` method for resuming after interruptions
+    func play() {
+        guard let player = player, !player.isPlaying else { return }
+        player.play()
+        isPlaying = true
+        updateNowPlayingPlaybackInfo()
+    }
+    
+    func pause() {
+        guard let player = player, player.isPlaying else { return }
+        player.pause()
+        isPlaying = false
+        updateNowPlayingPlaybackInfo()
+    }
+    
+    func togglePlayPause() {
+        if isPlaying {
+            pause()
+        } else {
+            // This is for resuming a paused song, not starting a new one.
+            play()
+        }
     }
     
     func stop() {
         player?.stop()
         player = nil
         isPlaying = false
-        nowPlayingID = nil      // 清除实际播放ID
-        currentPlayingID = nil  // 清除选中ID
+        nowPlayingID = nil
+        currentPlayingID = nil
         totalDuration = 0
         
-        // 停止监听系统音量
-        // NotificationCenter.default.removeObserver(self)
+        // Clear Now Playing info
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
     
-    func togglePlayPause() {
-        guard let player = player else { return }
-        
-        if player.isPlaying {
-            player.pause()
-            isPlaying = false
-        } else {
-            player.play()
-            isPlaying = true
-        }
-        updateNowPlayingPlaybackInfo()
-    }
-    
-    // 播放下一首
     func playNextTrack() {
         guard let currentID = currentPlayingID else { return }
         playlistManager.playNextTrack(currentID: currentID, mode: playbackMode, audioPlayer: self)
     }
     
-    // 播放上一首
     func playPreviousTrack() {
         guard let currentID = currentPlayingID else { return }
         playlistManager.playPreviousTrack(currentID: currentID, audioPlayer: self)
     }
     
-    // 切换播放模式
     func cyclePlaybackMode() {
         let allModes = PlaybackMode.allCases
         if let currentIndex = allModes.firstIndex(of: playbackMode) {
@@ -245,170 +290,104 @@ class AudioPlayer: NSObject, ObservableObject {
         }
     }
     
-    // 处理播放结束事件
-    func handleEnded() {
-        guard playbackMode != .loopOne else {
-            // 单曲循环，重新播放当前歌曲
-            player?.currentTime = 0
-            player?.play()
-            return
-        }
-        
-        playNextTrack()
-    }
-    
-    // 跳转到指定时间（用于进度条拖拽）
     func seek(to progress: Double) {
         guard let player = player else { return }
-        let newTime = min(progress * player.duration, player.duration - 0.1) // 确保不超过总时长
+        let newTime = player.duration * progress
         player.currentTime = newTime
         updateNowPlayingPlaybackInfo()
         
-        // 如果当前是暂停状态，拖动后可能会重新准备播放，这里我们保持状态
-        if !player.isPlaying {
-            player.play() // 使用播放确保音频正确准备
-            player.pause() // 立即暂停
+        // Preserve playback state if seeking while paused
+        if !player.isPlaying && isPlaying {
+            player.play() // Temporarily play to ensure seek is committed
+            player.pause() // Immediately pause again
         }
     }
     
-    // 播放列表代理
-    private class PlayerDelegate: NSObject, AVAudioPlayerDelegate {
-        weak var player: AudioPlayer?
-        
-        init(player: AudioPlayer) {
-            self.player = player
-        }
-        
-        func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-            if flag {
-                self.player?.handleEnded()
-            }
-        }
-    }
-    
-    // 在 AudioPlayer 中添加此方法
-    func pause() {
-        guard let player = player else { return }
-        if player.isPlaying {
-            player.pause()
-            isPlaying = false
-        }
-        updateNowPlayingPlaybackInfo()
-    }
-    
-    // 添加专门的加载但不播放功能
-    // 在 AudioPlayer 类中添加/修改
-    func loadWithoutPlaying(music: MusicFile) {
-        prepareOrPlay(music: music, action: .prepare)
-    }
-    
-    func play() {
-        guard let player = player,
-              let currentID = currentPlayingID,
-              player.isPlaying == false,
-              nowPlayingID == currentID else { return }
-        
-        player.play()
-        isPlaying = true
-        updateNowPlayingPlaybackInfo()
-    }
-    
-    func prepareOrPlay(music: MusicFile, action: PlayerAction = .play) {
-        currentAction = action
-        guard let url = GlobalMusicManager.shared.fileURL(for: music.fileName) else { return }
-        
-        // 如果是同一首歌曲且已加载，只需更新播放状态
-        if nowPlayingID == music.id && player != nil {
-            if action == .play && !player!.isPlaying {
-                player?.play()
-                isPlaying = true
-            }
-            updatePlayerVolume() // 确保音量更新
+    /// Called by the delegate when playback finishes.
+    func handlePlaybackEnded() {
+        guard playbackMode != .loopOne else {
+            player?.currentTime = 0
+            player?.play()
+            isPlaying = true
             updateNowPlayingPlaybackInfo()
             return
         }
-        
-        stop() // 停止当前播放
-        
-        do {
-            player = try AVAudioPlayer(contentsOf: url)
-            player?.prepareToPlay()
-            playerDelegate = PlayerDelegate(player: self)
-            player?.delegate = playerDelegate
-            player?.volume = Float(customVolume) * Float(AVAudioSession.sharedInstance().outputVolume)
-            
-            nowPlayingID = music.id
-            currentPlayingID = music.id
-            totalDuration = player?.duration ?? 0
-            
-            updateNowPlayingInfo(for: music)
-            
-            // 只在需要播放时才启动播放
-            if action == .play {
-                player?.play()
-                isPlaying = true
-            } else {
-                isPlaying = false
-            }
-            updateNowPlayingPlaybackInfo()
-            
-            // 开启音量监听
-            startObservingSystemVolume()
-            
-        } catch {
-            print("操作失败: \(error.localizedDescription)")
-        }
+        playNextTrack()
     }
     
     // MARK: - Now Playing Info
-    func setupRemoteTransportControls() {
+    
+    private func setupRemoteTransportControls() {
+        print("Setting up remote transport controls")
         let commandCenter = MPRemoteCommandCenter.shared()
         
-        commandCenter.playCommand.addTarget { [unowned self] event in
-            if !self.isPlaying {
-                self.play()
-                return .success
-            }
-            return .commandFailed
-        }
-        
-        commandCenter.pauseCommand.addTarget { [unowned self] event in
-            if self.isPlaying {
-                self.pause()
-                return .success
-            }
-            return .commandFailed
-        }
-        
-        commandCenter.nextTrackCommand.addTarget { [unowned self] event in
-            self.playNextTrack()
-            return .success
-        }
-        
-        commandCenter.previousTrackCommand.addTarget { [unowned self] event in
-            self.playPreviousTrack()
-            return .success
-        }
+        commandCenter.playCommand.addTarget(handler: handlePlayCommand)
+        commandCenter.pauseCommand.addTarget(handler: handlePauseCommand)
+        commandCenter.nextTrackCommand.addTarget(handler: handleNextTrackCommand)
+        commandCenter.previousTrackCommand.addTarget(handler: handlePreviousTrackCommand)
+        print("Set up remote transport controls done")
     }
     
-    func updateNowPlayingInfo(for music: MusicFile) {
-        var nowPlayingInfo = [String: Any]()
-        nowPlayingInfo[MPMediaItemPropertyTitle] = music.title
-        nowPlayingInfo[MPMediaItemPropertyArtist] = music.artist
-        if let image = GlobalMusicManager.shared.getCoverImage(for: music) {
-            nowPlayingInfo[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) {
-                _ in image
-            }
+    private func handlePlayCommand(event: MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus {
+        if !isPlaying {
+            play()
+            return .success
         }
-        nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = player?.duration ?? 0
+        return .commandFailed
+    }
+    
+    private func handlePauseCommand(event: MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus {
+        if isPlaying {
+            pause()
+            return .success
+        }
+        return .commandFailed
+    }
+    
+    private func handleNextTrackCommand(event: MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus {
+        playNextTrack()
+        return .success
+    }
+    
+    private func handlePreviousTrackCommand(event: MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus {
+        playPreviousTrack()
+        return .success
+    }
+    
+    private func updateNowPlayingInfo(for music: MusicFile) {
+        var nowPlayingInfo: [String: Any] = [
+            MPMediaItemPropertyTitle: music.title,
+            MPMediaItemPropertyArtist: music.artist,
+            MPMediaItemPropertyPlaybackDuration: player?.duration ?? 0
+        ]
+        
+        if let image = GlobalMusicManager.shared.getCoverImage(for: music) {
+            nowPlayingInfo[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        }
         
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
     }
     
-    func updateNowPlayingPlaybackInfo() {
+    private func updateNowPlayingPlaybackInfo() {
         var nowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [String: Any]()
         nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = player?.currentTime
         nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+    }
+}
+
+// MARK: - AVAudioPlayerDelegate Extension
+
+private class PlayerDelegate: NSObject, AVAudioPlayerDelegate {
+    weak var player: AudioPlayer?
+    
+    init(player: AudioPlayer) {
+        self.player = player
+    }
+    
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        if flag {
+            self.player?.handlePlaybackEnded()
+        }
     }
 }

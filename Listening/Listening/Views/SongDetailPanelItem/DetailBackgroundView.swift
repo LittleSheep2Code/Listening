@@ -42,13 +42,13 @@ struct DetailBackgroundView: View {
                 // 获取视图的实际尺寸
                 viewSize = geometry.size
             }
-            .onChange(of: geometry.size) { newSize in
+            .onChange(of: geometry.size) { _,newSize in
                 // 视图尺寸变化时更新
                 viewSize = newSize
             }
         }
         .ignoresSafeArea()
-        .onChange(of: coverImage) { newCoverImage in
+        .onChange(of: coverImage) { _,newCoverImage in
             handleCoverChange(newCoverImage: newCoverImage)
         }
         .onDisappear {

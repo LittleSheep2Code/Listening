@@ -35,10 +35,7 @@ struct CurvedLyricRow: View {
             .rotationEffect(.radians(rotationAngle)) // 新增：旋转修饰符
             .onTapGesture(perform: onTapped)
             .frame(maxWidth: .infinity, alignment: .center)
-            .onAppear {
-                updatePreCurveDistance(geometry: geometry)
-            }
-            .onChange(of: geometry.frame(in: .global)) { _ in
+            .onChange(of: geometry.frame(in: .global), initial: true) { _,_ in
                 updatePreCurveDistance(geometry: geometry)
             }
             // 发送距离值给父视图

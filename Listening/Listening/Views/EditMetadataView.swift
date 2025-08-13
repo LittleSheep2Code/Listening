@@ -85,7 +85,7 @@ struct EditMetadataView: View {
                     }
                 }
             }
-            .onChange(of: photoItem) { newItem in
+            .onChange(of: photoItem) { _,newItem in
                 loadPhoto(item: newItem)
             }
             .sheet(isPresented: $showDocumentPicker) {
