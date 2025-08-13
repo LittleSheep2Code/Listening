@@ -11,7 +11,7 @@ class AudioPlayer: NSObject, ObservableObject {
         
         let audioSession = AVAudioSession.sharedInstance()
         do {
-            try audioSession.setCategory(.playback, mode: .default, options: [])
+            try audioSession.setCategory(.playback, mode: .default, options: [.allowBluetooth, .allowAirPlay])
             try audioSession.setActive(true)
         } catch {
             print("Setting up audio session failed: \(error)")
@@ -162,6 +162,8 @@ class AudioPlayer: NSObject, ObservableObject {
         updatePlayerVolume()
     }
     
+    private var playerDelegate: PlayerDelegate?
+    
     // MARK: - 播放控制方法
     private func loadMusic(_ music: MusicFile) -> Bool {
         // 检查是否需要重新加载
@@ -178,7 +180,8 @@ class AudioPlayer: NSObject, ObservableObject {
         do {
             player = try AVAudioPlayer(contentsOf: url)
             player?.prepareToPlay()
-            player?.delegate = PlayerDelegate(player: self)
+            playerDelegate = PlayerDelegate(player: self)
+            player?.delegate = playerDelegate
             updatePlayerVolume() // 设置初始音量
             nowPlayingID = music.id
             currentPlayingID = music.id
@@ -330,7 +333,8 @@ class AudioPlayer: NSObject, ObservableObject {
         do {
             player = try AVAudioPlayer(contentsOf: url)
             player?.prepareToPlay()
-            player?.delegate = PlayerDelegate(player: self)
+            playerDelegate = PlayerDelegate(player: self)
+            player?.delegate = playerDelegate
             player?.volume = Float(customVolume) * Float(AVAudioSession.sharedInstance().outputVolume)
             
             nowPlayingID = music.id

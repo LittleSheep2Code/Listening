@@ -10,7 +10,7 @@ struct AboutView: View {
         ScrollView {
             VStack(alignment: .leading) {
                 HStack(alignment: .bottom, spacing: 20) {
-                    let displayIconName = currentIconName == nil ? "Logo" : "Logo Original";
+                    let displayIconName = currentIconName == nil ? "Logo" : "Logo-Original";
                     
                     Image(displayIconName)
                         .resizable()
@@ -22,7 +22,7 @@ struct AboutView: View {
                     
                     Button(action: {
                         UIApplication.shared.setAlternateIconName(
-                            currentIconName == nil ? "AppIcon Original" : nil,
+                            currentIconName == nil ? "AppIcon-Original" : nil,
                             completionHandler: { err in
                                 currentIconName = UIApplication.shared.alternateIconName
                                 didError = err != nil
