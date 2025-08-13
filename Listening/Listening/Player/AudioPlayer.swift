@@ -17,6 +17,71 @@ class AudioPlayer: NSObject, ObservableObject {
             print("Setting up audio session failed: \(error)")
         }
         setupRemoteTransportControls()
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioSessionInterruption(_:)),
+            name: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil
+        )
+    }
+    
+    @objc private func handleAppDidBecomeActive() {
+        // Re-activate the session after background/lock transitions
+        let audioSession = AVAudioSession.sharedInstance()
+        do {
+            try audioSession.setActive(true, options: [])
+            updatePlayerVolume()
+            updateNowPlayingPlaybackInfo()
+        } catch {
+            print("Failed to reactivate audio session: \(error)")
+        }
+    }
+
+    @objc private func handleAudioSessionInterruption(_ notification: Notification) {
+        guard
+            let info = notification.userInfo,
+            let typeValue = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+            let type = AVAudioSession.InterruptionType(rawValue: typeValue)
+        else { return }
+
+        switch type {
+        case .began:
+            // System took audio. Reflect paused state so lock screen stays in sync.
+            if isPlaying { pause() }
+
+        case .ended:
+            // Check whether the system allows resuming.
+            let optionsValue = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+
+            do {
+                try AVAudioSession.sharedInstance().setActive(true, options: [])
+            } catch {
+                print("Failed to re-activate session after interruption end: \(error)")
+            }
+
+            if options.contains(.shouldResume) {
+                // Only resume if we were previously playing & user expects playback
+                play()
+            } else {
+                updateNowPlayingPlaybackInfo()
+            }
+        @unknown default:
+            break
+        }
+    }
+
+    // Optional: tidy up, though singleton rarely deallocs
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
     
     var player: AVAudioPlayer?
