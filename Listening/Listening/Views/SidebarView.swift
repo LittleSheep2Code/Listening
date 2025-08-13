@@ -67,15 +67,14 @@ private struct PlaylistsSection: View {
     @Binding var currentView: RightViewType?
     let onDelete: (IndexSet) -> Void
     let onMove: ((IndexSet, Int) -> Void)?
+    let onCreatePlaylist: () -> Void
     
     var body: some View {
         Section(header:
                     HStack {
             Text("我的歌单")
                 .font(.headline)
-            Button(action: {
-                // This button action should be passed in from parent if needed
-            }) {
+            Button(action: onCreatePlaylist) {
                 Image(systemName: "plus")
             }
             .disabled(isEditing)
@@ -159,7 +158,8 @@ struct SidebarView: View {
                         selectedPlaylistIds: $selectedPlaylistIds,
                         currentView: $currentView,
                         onDelete: onDelete,
-                        onMove: movePlaylists
+                        onMove: movePlaylists,
+                        onCreatePlaylist: onCreatePlaylist
                     )
                     .onAppear {
                         // Workaround to enable the plus button action here
