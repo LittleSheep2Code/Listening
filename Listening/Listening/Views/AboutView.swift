@@ -44,7 +44,7 @@ struct AboutView: View {
                     }
                 }.padding(.bottom, 20)
                 
-                Text("聆听")
+                Text("聆阁")
                     .font(.largeTitle)
                     .fontWeight(.bold)
                 Text("一个简单的本地音乐播放器，仅此而已")

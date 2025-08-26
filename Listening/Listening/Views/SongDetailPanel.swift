@@ -41,7 +41,7 @@ struct SongDetailPanel: View {
                 VStack(spacing: 0) {
                     let leftPanel = LeftPanelView(
                         coverImage: coverImage,
-                        coverWidth: geometry.size.width * 0.4,
+                        coverWidth: isCompact ? geometry.size.width * 0.8 : geometry.size.width * 0.4,
                         progress: $progress,
                         currentTime: $currentTime,
                         totalTime: $totalTime,

@@ -19,7 +19,7 @@ struct LeftPanelView: View {
     // 新增：播放列表弹窗状态
     @State private var showPlaylistPopover = false
     
-    var maxCoverSize: CGFloat = 320
+    var maxCoverSize: CGFloat = 400
     
     var body: some View {
         VStack(alignment: .center, spacing: 40) {
@@ -77,6 +77,7 @@ struct LeftPanelView: View {
                 .buttonStyle(BorderlessButtonStyle())
             }
             .padding(.horizontal, 55)
+            .frame(width: min(coverWidth, maxCoverSize)+55, alignment: .center)
             
             // 进度条和时间
             VStack(spacing: 20){
@@ -154,7 +155,7 @@ struct LeftPanelView: View {
                     
                 }
                 .padding(.horizontal, 60)
-            }
+            }.frame(width: min(coverWidth, maxCoverSize)+60, alignment: .center)
             
             // 控制按钮行
             HStack(spacing: 52) {
@@ -216,7 +217,7 @@ struct LeftPanelView: View {
                 }
             }
             .padding(.vertical, 0)
-        }
+        }.frame(width: min(coverWidth, maxCoverSize), alignment: .center)
     }
     
     private func timeString(from time: TimeInterval) -> String {
